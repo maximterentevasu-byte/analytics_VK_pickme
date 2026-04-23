@@ -1,0 +1,17 @@
+{
+  "name": "vk-sheets-members-sync",
+  "version": "1.0.0",
+  "description": "Weekly VK public members count sync to Google Sheets",
+  "type": "module",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.5",
+    "googleapis": "^150.0.1"
+  }
+}
