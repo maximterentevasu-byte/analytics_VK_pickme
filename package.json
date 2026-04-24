@@ -1,6 +1,6 @@
 {
   "name": "vk-sheets-metrics-sync",
-  "version": "5.0.0",
+  "version": "5.1.0",
   "description": "Weekly VK community analytics sync to Google Sheets",
   "type": "module",
   "main": "src/index.js",

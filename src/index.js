@@ -5,6 +5,9 @@ const CONFIG = {
   vkToken: requiredEnv('VK_TOKEN'),
   vkGroups: splitCsv(requiredEnv('VK_GROUPS')),
   vkVersion: process.env.VK_API_VERSION || '5.199',
+  vkRequestDelayMs: parseInt(process.env.VK_REQUEST_DELAY_MS || '700', 10),
+  vkStatsRequestDelayMs: parseInt(process.env.VK_STATS_REQUEST_DELAY_MS || '1200', 10),
+  vkRetryMax: parseInt(process.env.VK_RETRY_MAX || '8', 10),
   vkEnableStats: parseBool(process.env.VK_ENABLE_STATS, true),
   vkBackfillFrom: process.env.VK_BACKFILL_FROM || '',
   vkWallMaxPosts: parseInt(process.env.VK_WALL_MAX_POSTS || '5000', 10),
@@ -94,7 +97,7 @@ async function main() {
   const lastFullWeek = getLastCompletedWeek(now);
   if (!lastFullWeek) throw new Error('Не удалось определить последнюю полную неделю.');
 
-  console.log(`VK metrics sync v5.0 started for ${CONFIG.vkGroups.length} groups. Last full week: ${fmtDate(lastFullWeek.start)}..${fmtDate(lastFullWeek.end)}`);
+  console.log(`VK metrics sync v5.1 started for ${CONFIG.vkGroups.length} groups. Last full week: ${fmtDate(lastFullWeek.start)}..${fmtDate(lastFullWeek.end)}`);
 
   const sheets = await createSheetsClient();
   await ensureSheetHeaders(sheets, CONFIG.summarySheetName, SUMMARY_HEADERS);
@@ -401,6 +404,7 @@ async function fetchStatsByWeeksSafe(groupId, weeks) {
   const map = new Map();
   for (const week of weeks) {
     try {
+      await sleep(CONFIG.vkStatsRequestDelayMs);
       const stats = await fetchStatsForWeek(groupId, week);
       map.set(fmtDate(week.start), stats);
     } catch (error) {
@@ -443,27 +447,62 @@ async function fetchStatsForWeek(groupId, week) {
 }
 
 async function vkApi(method, params = {}) {
-  const url = new URL(`https://api.vk.com/method/${method}`);
-  const query = {
-    ...params,
-    access_token: CONFIG.vkToken,
-    v: CONFIG.vkVersion,
-  };
-  for (const [key, value] of Object.entries(query)) {
-    if (value !== undefined && value !== null && value !== '') url.searchParams.set(key, String(value));
+  let lastError;
+
+  for (let attempt = 0; attempt <= CONFIG.vkRetryMax; attempt += 1) {
+    if (attempt > 0) {
+      const backoffMs = Math.min(30000, CONFIG.vkRequestDelayMs * Math.pow(2, attempt) + randomInt(100, 900));
+      console.warn(`VK временно ограничил запросы. Повтор ${attempt}/${CONFIG.vkRetryMax} для ${method} через ${backoffMs} мс`);
+      await sleep(backoffMs);
+    } else {
+      await sleep(CONFIG.vkRequestDelayMs);
+    }
+
+    const url = new URL(`https://api.vk.com/method/${method}`);
+    const query = {
+      ...params,
+      access_token: CONFIG.vkToken,
+      v: CONFIG.vkVersion,
+    };
+    for (const [key, value] of Object.entries(query)) {
+      if (value !== undefined && value !== null && value !== '') url.searchParams.set(key, String(value));
+    }
+
+    const response = await fetch(url, { method: 'GET' });
+    const json = await response.json().catch(() => null);
+    if (!response.ok || !json) {
+      lastError = new Error(`HTTP ошибка VK ${response.status}: ${JSON.stringify(json)}`);
+      continue;
+    }
+
+    if (json.error) {
+      const code = Number(json.error.error_code);
+      const message = json.error.error_msg || 'unknown VK error';
+      lastError = new Error(`ошибка VK API в ${method}: [${code}] ${message}`);
+
+      if ((code === 6 || code === 9 || code === 10) && attempt < CONFIG.vkRetryMax) {
+        continue;
+      }
+
+      console.error(`Ошибка VK API в ${method}: [${code}] ${message}`);
+      console.error(`Параметры метода VK: ${JSON.stringify(params)}`);
+      throw lastError;
+    }
+
+    return json.response;
   }
 
-  const response = await fetch(url, { method: 'GET' });
-  const json = await response.json().catch(() => null);
-  if (!response.ok || !json) {
-    throw new Error(`HTTP ошибка VK ${response.status}: ${JSON.stringify(json)}`);
-  }
-  if (json.error) {
-    console.error(`Ошибка VK API в ${method}: [${json.error.error_code}] ${json.error.error_msg}`);
-    console.error(`Параметры метода VK: ${JSON.stringify(params)}`);
-    throw new Error(`ошибка VK API в ${method}: [${json.error.error_code}] ${json.error.error_msg}`);
-  }
-  return json.response;
+  console.error(`VK API не ответил успешно после ${CONFIG.vkRetryMax + 1} попыток в ${method}`);
+  console.error(`Параметры метода VK: ${JSON.stringify(params)}`);
+  throw lastError || new Error(`VK API error in ${method}`);
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, Math.max(0, Number(ms) || 0)));
+}
+
+function randomInt(min, max) {
+  return Math.floor(Math.random() * (max - min + 1)) + min;
 }
 
 async function createSheetsClient() {

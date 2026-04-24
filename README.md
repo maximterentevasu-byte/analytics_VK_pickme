@@ -128,3 +128,16 @@ groups,wall,stats,offline
 2. Создать Service Account.
 3. Создать JSON key.
 4. Расшарить Google Sheet на email service account с правом редактора.
+
+
+## Защита от лимитов VK
+
+Если VK возвращает `[6] Слишком много запросов в секунду`, увеличьте задержки в Railway Variables:
+
+```env
+VK_REQUEST_DELAY_MS=700
+VK_STATS_REQUEST_DELAY_MS=1200
+VK_RETRY_MAX=8
+```
+
+Для первого ретро-запуска можно временно поставить `VK_ENABLE_STATS=false`, чтобы быстро заполнить постовые метрики, а затем включить статистику.
