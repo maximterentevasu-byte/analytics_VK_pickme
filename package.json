@@ -1,6 +1,6 @@
 {
   "name": "vk-sheets-metrics-sync",
-  "version": "9.2.0",
+  "version": "9.2.1",
   "type": "module",
   "main": "src/index.js",
   "scripts": {

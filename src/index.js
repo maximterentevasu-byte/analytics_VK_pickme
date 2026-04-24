@@ -302,9 +302,42 @@ function buildClipsRows(group, posts){
   return clips.map(p=>{ const m=postMetrics(p); const w=mondayStartUTC(new Date(p.date*1000)); return [`clip_${group.id}_${p.id}`,new Date().toISOString(),isoDate(w),group.id,group.name,p.id,link(group,p),ekbDate(p.date),videoSeconds(p),m.views,m.likes,m.comments,m.reposts,m.engagement,m.erView,m.viral,m.discussion,m.likeable,m.index,(p.text||'').replace(/\s+/g,' ').slice(0,500),'']; });
 }
 function buildAudienceRows(group, weeks, statsByWeek){
-  const rows=[];
-  for(const week of weeks){ const st=statsByWeek.get(isoDate(week.start)); if(st?.audienceRows?.length){ for(const r of st.audienceRows) rows.push([`aud_${group.id}_${isoDate(week.start)}_${r.segment}_${r.value}`,new Date().toISOString(),isoDate(week.start),isoDate(week.end),group.id,group.name,r.segment,r.value,r.count,r.source,'']); }
-    else rows.push([`aud_${group.id}_${isoDate(week.start)}_none`,new Date().toISOString(),isoDate(week.start),isoDate(week.end),group.id,group.name,'Данные недоступны','VK API не отдал демографию','','stats.get',st?.warning || 'нет sex_age/cities/countries/devices в ответе stats.get']); }
+  const rows = [];
+  for (const week of weeks) {
+    const weekStart = isoDate(week.start);
+    const st = statsByWeek.get(weekStart);
+
+    if (st?.audienceRows?.length) {
+      for (const r of st.audienceRows) {
+        rows.push([
+          `aud_${group.id}_${weekStart}_${r.segment}_${r.value}`,
+          new Date().toISOString(),
+          weekStart,
+          isoDate(week.end),
+          group.id,
+          group.name,
+          r.segment,
+          r.value,
+          r.count,
+          r.source,
+          ''
+        ]);
+      }
+    } else {
+      rows.push([
+        `aud_${group.id}_${weekStart}_none`,
+        new Date().toISOString(),
+        weekStart,
+        isoDate(week.end),
+        group.id,
+        group.name,
+        'Данные недоступны',
+        'VK API не отдал демографию',
+        '',
+        'stats.get',
+        st?.warning || 'нет sex_age/cities/countries/devices в ответе stats.get'
+      ]);
+    }
   }
   return rows;
 }
