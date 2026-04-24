@@ -4,26 +4,26 @@ import { google } from 'googleapis';
 
 dotenv.config();
 
-const CFG = {
+const cfg = {
   vkToken: must('VK_TOKEN'),
-  groups: must('VK_GROUPS').split(',').map(s => cleanGroupId(s)).filter(Boolean),
-  enableStats: bool(process.env.VK_ENABLE_STATS, true),
-  daysBack: int(process.env.VK_DAYS_BACK, 365),
+  groups: must('VK_GROUPS').split(',').map(s => normalizeGroupId(s)).filter(Boolean),
+  daysBack: intEnv('VK_DAYS_BACK', 180),
   backfillFrom: process.env.VK_BACKFILL_FROM || '',
-  recalcWeeks: int(process.env.VK_RECALC_PREVIOUS_WEEKS, 8),
-  wallMaxPosts: int(process.env.VK_WALL_MAX_POSTS, 500),
-  reqDelay: int(process.env.VK_REQUEST_DELAY_MS, 900),
-  statsDelay: int(process.env.VK_STATS_REQUEST_DELAY_MS, 1600),
-  retryMax: int(process.env.VK_RETRY_MAX, 8),
-  viralThreshold: num(process.env.VK_VIRAL_THRESHOLD, 2),
-  weights: parseWeights(process.env.VK_ENGAGEMENT_WEIGHTS || '1,2,3'),
-  sheetId: must('GOOGLE_SHEETS_SPREADSHEET_ID'),
+  enableStats: boolEnv('VK_ENABLE_STATS', true),
+  requestDelayMs: intEnv('VK_REQUEST_DELAY_MS', 900),
+  statsDelayMs: intEnv('VK_STATS_REQUEST_DELAY_MS', 1600),
+  retryMax: intEnv('VK_RETRY_MAX', 8),
+  recalcWeeks: intEnv('VK_RECALC_PREVIOUS_WEEKS', 4),
+  tz: process.env.REPORT_TIMEZONE || 'Asia/Yekaterinburg',
+  tzLabel: process.env.REPORT_TIMEZONE_LABEL || 'ЕКБ',
+  spreadsheetId: must('GOOGLE_SHEETS_SPREADSHEET_ID'),
   serviceEmail: must('GOOGLE_SERVICE_ACCOUNT_EMAIL'),
-  privateKey: must('GOOGLE_PRIVATE_KEY').replace(/\\n/g, '\n').replace(/^"|"$/g, ''),
+  privateKey: must('GOOGLE_PRIVATE_KEY').replace(/\\n/g, '\n'),
   summarySheet: process.env.GOOGLE_SUMMARY_SHEET_NAME || 'weekly_summary',
   postsSheet: process.env.GOOGLE_POSTS_SHEET_NAME || 'posts_raw_vk',
   dashboardSheet: process.env.GOOGLE_DASHBOARD_SHEET_NAME || 'dashboard_data',
-  recSheet: process.env.GOOGLE_RECOMMENDATIONS_SHEET_NAME || 'ai_recommendations'
+  recommendationsSheet: process.env.GOOGLE_RECOMMENDATIONS_SHEET_NAME || 'ai_recommendations',
+  insightsSheet: process.env.GOOGLE_INSIGHTS_SHEET_NAME || 'ai_insights',
 };
 
 const SUMMARY_HEADERS = [
@@ -36,233 +36,351 @@ const SUMMARY_HEADERS = [
   'Дельта показов WoW, абс.','Дельта показов WoW, %','Дельта ER по охвату WoW, п.п.','Дельта ER по охвату WoW, %',
   'Средние просмотры поста','Медианные просмотры поста','Лучший пост недели, ID','Лучший пост недели, ссылка','Лучший пост недели: просмотры',
   'Лучший пост по вовлеченности, ID','Лучший пост по ER, ID','Вирусность, %','Обсуждаемость, %','Лайкабельность, %','Индекс вовлеченности',
-  'Вирусные посты','Вирусные посты, %','Стд. отклонение просмотров','Постов в день','Лучший день недели','Лучший час публикации',
-  'Лучший формат контента','Прогноз подписчиков через 4 недели','Прогноз просмотров следующей недели','AI рекомендация: что постить','AI рекомендация: когда постить','AI рекомендация: фокус',
-  'Источник охвата','Предупреждения'
+  'Вирусные посты, шт.','Вирусные посты, %','Стд. отклонение просмотров','Частота постинга, постов/день',
+  'Лучший день публикации','Лучший час публикации','Лучший формат','Прогноз подписчиков на следующую неделю','Прогноз просмотров постов на следующую неделю',
+  'AI рекомендация: контент','AI рекомендация: частота','AI рекомендация: время','Источник охвата','Предупреждения'
 ];
 
-const POSTS_HEADERS = ['Ключ недели','Дата поста','ID группы','Название группы','ID поста','Ссылка','Тип поста','День недели','Час','Текст','Просмотры','Лайки','Комментарии','Репосты','Вовлеченность','ER по просмотрам, %','Вирусность, %','Обсуждаемость, %','Лайкабельность, %','Индекс вовлеченности','Вирусный пост'];
-const DASH_HEADERS = ['Неделя с','Группа','Подписчики','Публикации','Просмотры постов','Вовлеченность','ER по подписчикам, %','ER по просмотрам, %','ER по охвату, %','Охват всего','Охват подписчиков','Доля охвата подписчиков к подписчикам, %','Вирусность, %','Обсуждаемость, %','Лайкабельность, %','Индекс вовлеченности','Лучший формат контента','Лучший день недели','Лучший час публикации','AI рекомендация: что постить','AI рекомендация: когда постить','Предупреждения'];
-const REC_HEADERS = ['Дата сбора','ID группы','Название группы','Период анализа','Рекомендация','Основание','Приоритет'];
+const POSTS_HEADERS = [
+  'Ключ недели','Дата публикации ЕКБ','ID группы','Короткое имя группы','Название группы','ID поста','Ссылка',
+  'Тип поста','Текст, первые 200 символов','Просмотры','Лайки','Комментарии','Репосты','Вовлеченность','ER по просмотрам, %','Час ЕКБ','День недели ЕКБ'
+];
 
-function must(name){ const v=process.env[name]; if(!v) throw new Error(`Нет переменной окружения ${name}`); return v; }
-function int(v,d){ const n=parseInt(v,10); return Number.isFinite(n)?n:d; }
-function num(v,d){ const n=Number(v); return Number.isFinite(n)?n:d; }
-function bool(v,d){ if(v===undefined) return d; return ['1','true','yes','on'].includes(String(v).toLowerCase()); }
-function parseWeights(s){ const [l,c,r]=s.split(',').map(Number); return {like:l||1, comment:c||2, repost:r||3}; }
-function cleanGroupId(s){ return String(s||'').trim().replace(/^https?:\/\/vk\.com\//,'').replace(/^@/,'').replace(/\/$/,''); }
-const sleep = ms => new Promise(r => setTimeout(r, ms));
-const iso = d => d.toISOString().slice(0,10);
-const unix = d => Math.floor(d.getTime()/1000);
-function monday(d){ const x=new Date(Date.UTC(d.getUTCFullYear(),d.getUTCMonth(),d.getUTCDate())); const day=x.getUTCDay() || 7; x.setUTCDate(x.getUTCDate()-day+1); x.setUTCHours(0,0,0,0); return x; }
-function weekEnd(start){ const d=new Date(start); d.setUTCDate(d.getUTCDate()+6); d.setUTCHours(23,59,59,999); return d; }
-function pct(a,b){ return b ? round((a/b)*100,4) : ''; }
-function round(n,d=2){ return Number.isFinite(n) ? Number(n.toFixed(d)) : ''; }
-function sum(a){ return a.reduce((x,y)=>x+(Number(y)||0),0); }
-function avg(a){ return a.length ? sum(a)/a.length : 0; }
-function median(a){ if(!a.length) return 0; const s=[...a].sort((x,y)=>x-y); const m=Math.floor(s.length/2); return s.length%2?s[m]:(s[m-1]+s[m])/2; }
-function std(a){ if(!a.length) return 0; const av=avg(a); return Math.sqrt(avg(a.map(x=>(x-av)**2))); }
-function dayRu(date){ return ['Вс','Пн','Вт','Ср','Чт','Пт','Сб'][date.getUTCDay()]; }
-function postLink(g,p){ return `https://vk.com/${g.screen_name || 'club'+g.id}?w=wall-${g.id}_${p.id}`; }
+const REC_HEADERS = ['Дата сбора','ID группы','Название группы','Период','Рекомендация','Обоснование','Приоритет'];
+const INSIGHT_HEADERS = ['Дата сбора','ID группы','Название группы','Период','Тренд','Вывод','Риск','Возможность'];
 
-async function vkApi(method, params={}, delay=CFG.reqDelay){
-  await sleep(delay);
-  let last;
-  for(let i=0;i<CFG.retryMax;i++){
-    try{
-      const {data}=await axios.get(`https://api.vk.com/method/${method}`,{params:{...params, access_token:CFG.vkToken, v:'5.199'}, timeout:30000});
-      if(data.error){
-        last = data.error;
-        if([6,9,10,29].includes(data.error.error_code)){ await sleep(1000*(i+1)); continue; }
-        throw new Error(`Ошибка VK API в ${method}: [${data.error.error_code}] ${data.error.error_msg}. Params=${JSON.stringify(params)}`);
-      }
-      return data.response;
-    }catch(e){ last=e; if(i===CFG.retryMax-1) break; await sleep(1000*(i+1)); }
-  }
-  throw new Error(`Ошибка VK API в ${method}: ${last?.error_msg || last?.message || JSON.stringify(last)}`);
+function must(name){ const v=process.env[name]; if(!v) throw new Error(`Не задана переменная ${name}`); return v; }
+function intEnv(name, def){ const n=parseInt(process.env[name] || '',10); return Number.isFinite(n)?n:def; }
+function boolEnv(name, def){ const v=process.env[name]; if(v==null) return def; return ['1','true','yes','да','on'].includes(String(v).toLowerCase()); }
+function normalizeGroupId(s){ return String(s||'').trim().replace(/^https?:\/\/vk\.com\//,'').replace(/^@/,'').replace(/\/$/,''); }
+function sleep(ms){ return new Promise(r=>setTimeout(r,ms)); }
+function unix(d){ return Math.floor(d.getTime()/1000); }
+function isoDate(d){ return d.toISOString().slice(0,10); }
+function nvl(v){ return v == null || Number.isNaN(v) ? '' : v; }
+function pct(num, den){ return den ? round((num/den)*100,4) : null; }
+function round(n, digits=4){ if(n==null || !Number.isFinite(n)) return null; return Number(Number(n).toFixed(digits)); }
+function sum(arr){ return arr.reduce((a,b)=>a+(Number(b)||0),0); }
+function avg(arr){ const a=arr.filter(x=>Number.isFinite(x)); return a.length?sum(a)/a.length:null; }
+function median(arr){ const a=arr.filter(x=>Number.isFinite(x)).sort((x,y)=>x-y); if(!a.length) return null; const m=Math.floor(a.length/2); return a.length%2?a[m]:(a[m-1]+a[m])/2; }
+function std(arr){ const a=arr.filter(x=>Number.isFinite(x)); if(!a.length) return null; const mean=avg(a); return Math.sqrt(avg(a.map(x=>(x-mean)**2))); }
+function safeDelta(cur, prev){ return cur!=null && prev!=null ? round(cur-prev,4) : null; }
+function safeDeltaPct(cur, prev){ return cur!=null && prev ? round(((cur-prev)/prev)*100,4) : null; }
+function weekKey(groupId, start){ return `${groupId}-${isoDate(start)}`; }
+function postLink(screen, id){ return `https://vk.com/${screen}?w=wall-${screen.startsWith('club')||screen.startsWith('public')?screen.replace(/^(club|public)/,''):''}_${id}`; }
+function wallPostLink(groupId, postId){ return `https://vk.com/wall-${groupId}_${postId}`; }
+
+function fmtDateTz(date, opts={}){
+  return new Intl.DateTimeFormat('ru-RU', { timeZone: cfg.tz, year:'numeric', month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit', second:'2-digit', ...opts }).format(date);
 }
+function hourTz(ts){ return Number(new Intl.DateTimeFormat('ru-RU',{timeZone:cfg.tz,hour:'2-digit',hour12:false}).format(new Date(ts*1000))); }
+function weekdayTz(ts){ return new Intl.DateTimeFormat('ru-RU',{timeZone:cfg.tz,weekday:'short'}).format(new Date(ts*1000)); }
 
-async function fetchGroup(id){
-  let response;
-  for(const params of [{group_ids:id, fields:'members_count,screen_name'}, {group_id:id, fields:'members_count,screen_name'}]){
-    try{
-      response=await vkApi('groups.getById', params);
-      const group = Array.isArray(response) ? response[0] : response?.groups?.[0];
-      if(group?.id) return group;
-    }catch(e){ console.warn(`groups.getById попытка не удалась: ${e.message}`); }
-  }
-  throw new Error(`Не удалось получить группу ${id}. Последний ответ: ${JSON.stringify(response)}`);
+function lastFullWeekUtc(){
+  const now = new Date();
+  const utcDay = now.getUTCDay() || 7;
+  const mondayThisWeek = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() - utcDay + 1, 0,0,0));
+  const start = new Date(mondayThisWeek.getTime() - 7*86400000);
+  const end = new Date(mondayThisWeek.getTime() - 1000);
+  return {start,end};
 }
-
-async function fetchPosts(group){
-  const owner_id = -Number(group.id);
-  const posts=[]; let offset=0; const page=100;
-  while(posts.length < CFG.wallMaxPosts){
-    const res = await vkApi('wall.get',{owner_id, count:Math.min(page, CFG.wallMaxPosts-posts.length), offset});
-    const items=(res.items||[]).filter(p=>!p.is_pinned && p.date);
-    posts.push(...items);
-    if(!res.items || res.items.length<page) break;
-    offset += page;
-  }
-  return posts;
+function mondayUtcForDate(d){
+  const day=d.getUTCDay()||7;
+  return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()-day+1,0,0,0));
 }
-
-async function fetchStats(groupId, ws, we){
-  if(!CFG.enableStats) return {stats:null, warnings:['stats.get отключён']};
-  try{
-    const res = await vkApi('stats.get',{group_id:groupId, timestamp_from:unix(ws), timestamp_to:unix(we), interval:'day'}, CFG.statsDelay);
-    const days = Array.isArray(res) ? res : [];
-    if(!days.length) return {stats:null, warnings:['stats.get вернул пустой ответ']};
-    const stats = {visitors:0, views:0, reachTotal:0, reachSubscribers:0, reachMobile:0, subscribed:0, unsubscribed:0};
-    for(const d of days){
-      stats.visitors += Number(d.visitors || d.activity?.visitors || 0);
-      stats.views += Number(d.views || d.activity?.views || 0);
-      stats.reachTotal += Number(d.reach?.reach || d.reach?.total || 0);
-      stats.reachSubscribers += Number(d.reach?.reach_subscribers || d.reach?.subscribers || 0);
-      stats.reachMobile += Number(d.reach?.mobile_reach || d.reach?.mobile || 0);
-      stats.subscribed += Number(d.activity?.subscribed || d.subscribed || 0);
-      stats.unsubscribed += Number(d.activity?.unsubscribed || d.unsubscribed || 0);
-    }
-    const allZero = Object.values(stats).every(v=>!v);
-    return {stats: allZero ? null : stats, warnings: allZero ? ['stats.get доступен, но нужные поля пустые/нулевые'] : []};
-  }catch(e){ return {stats:null, warnings:[`stats.get недоступен: ${e.message}`]}; }
-}
-
-function postType(p){
-  const a=p.attachments||[];
-  if(p.copy_history?.length) return 'repost';
-  if(a.some(x=>x.type==='video' && (x.video?.type==='short_video' || x.video?.platform==='clips'))) return 'clip';
-  if(a.some(x=>x.type==='video')) return 'video';
-  if(a.some(x=>x.type==='photo')) return 'image';
-  if(a.some(x=>x.type==='link')) return 'link';
-  return 'text';
-}
-
-function aggregateWeek(group, weekStart, weekPosts, statsResult, currentMembers){
-  const views = weekPosts.map(p=>p.views?.count||0);
-  const likes = weekPosts.map(p=>p.likes?.count||0);
-  const comments = weekPosts.map(p=>p.comments?.count||0);
-  const reposts = weekPosts.map(p=>p.reposts?.count||0);
-  const totalViews=sum(views), totalLikes=sum(likes), totalComments=sum(comments), totalReposts=sum(reposts), engagement=totalLikes+totalComments+totalReposts;
-  const weighted = totalLikes*CFG.weights.like + totalComments*CFG.weights.comment + totalReposts*CFG.weights.repost;
-  const med=median(views), sd=std(views);
-  const bestViewsPost = [...weekPosts].sort((a,b)=>(b.views?.count||0)-(a.views?.count||0))[0];
-  const bestEngPost = [...weekPosts].sort((a,b)=>((b.likes?.count||0)+(b.comments?.count||0)+(b.reposts?.count||0))-((a.likes?.count||0)+(a.comments?.count||0)+(a.reposts?.count||0)))[0];
-  const bestErPost = [...weekPosts].sort((a,b)=>postErView(b)-postErView(a))[0];
-  const viralPosts = weekPosts.filter(p=>(p.views?.count||0) > med * CFG.viralThreshold && med>0).length;
-  const formatScores = scoreBy(weekPosts, p=>postType(p));
-  const dayScores = scoreBy(weekPosts, p=>dayRu(new Date(p.date*1000)));
-  const hourScores = scoreBy(weekPosts, p=>String(new Date(p.date*1000).getUTCHours()).padStart(2,'0'));
-  const bestFormat = bestKey(formatScores), bestDay=bestKey(dayScores), bestHour=bestKey(hourScores);
-  const s = statsResult.stats;
-  const warnings = [...statsResult.warnings];
-  let reachTotal=s?.reachTotal ?? '';
-  let reachSubs=s?.reachSubscribers ?? '';
-  let source='stats.get';
-  if(!s?.reachTotal && totalViews){ reachTotal=totalViews; source='fallback: просмотры постов'; warnings.push('Охват всего заменён просмотрами постов'); }
-  if(!s?.reachSubscribers && totalViews){ reachSubs=''; warnings.push('Охват подписчиков VK не отдал'); }
-  const erReach = reachTotal ? pct(engagement, reachTotal) : '';
-  return {
-    key:`${group.id}_${iso(weekStart)}`,
-    collectedAt:new Date().toISOString(), ws:iso(weekStart), we:iso(weekEnd(weekStart)), group,
-    members: currentMembers, posts:weekPosts.length, views:totalViews, likes:totalLikes, comments:totalComments, reposts:totalReposts, engagement,
-    erSubs: pct(engagement, currentMembers), erViews:pct(engagement,totalViews), erReach,
-    reachShare: (reachSubs && currentMembers) ? pct(reachSubs,currentMembers) : '',
-    visitors:s?.visitors ?? '', communityViews:s?.views ?? '', reachTotal, reachSubs, reachMobile:s?.reachMobile ?? '',
-    subscribed:s?.subscribed ?? '', unsubscribed:s?.unsubscribed ?? '', netGrowth: s ? s.subscribed-s.unsubscribed : '', growthPct:'',
-    avgViews:round(avg(views),2), medViews:round(med,2), bestViewsPost, bestEngPost, bestErPost,
-    bestViews: bestViewsPost?.views?.count || '', virality:pct(totalReposts,totalViews), discussion:pct(totalComments,totalViews), likeability:pct(totalLikes,totalViews), engagementIndex:pct(weighted,totalViews),
-    viralPosts, viralPct:pct(viralPosts, weekPosts.length), stdViews:round(sd,2), postsPerDay:round(weekPosts.length/7,2), bestDay,bestHour,bestFormat, source, warnings
-  };
-}
-
-function postErView(p){ const v=p.views?.count||0; const e=(p.likes?.count||0)+(p.comments?.count||0)+(p.reposts?.count||0); return v?e/v:0; }
-function scoreBy(posts, keyFn){ const m={}; for(const p of posts){ const k=keyFn(p); const v=(p.views?.count||0)+(((p.likes?.count||0)+(p.comments?.count||0)+(p.reposts?.count||0))*10); if(!m[k]) m[k]={score:0,count:0}; m[k].score+=v; m[k].count++; } return m; }
-function bestKey(obj){ const e=Object.entries(obj).sort((a,b)=>(b[1].score/b[1].count)-(a[1].score/a[1].count))[0]; return e ? e[0] : ''; }
-
-function addDeltas(rows){
-  rows.sort((a,b)=>a.ws.localeCompare(b.ws));
-  for(let i=0;i<rows.length;i++){
-    const p=rows[i-1], r=rows[i];
-    r.deltaMembers = p && r.members!=='' && p.members!=='' ? r.members-p.members : '';
-    r.deltaMembersPct = p && p.members ? pct(r.deltaMembers,p.members) : '';
-    r.deltaReach = p && r.reachTotal!=='' && p.reachTotal!=='' ? r.reachTotal-p.reachTotal : '';
-    r.deltaReachPct = p && p.reachTotal ? pct(r.deltaReach,p.reachTotal) : '';
-    r.deltaImpr = p && r.communityViews!=='' && p.communityViews!=='' ? r.communityViews-p.communityViews : '';
-    r.deltaImprPct = p && p.communityViews ? pct(r.deltaImpr,p.communityViews) : '';
-    r.deltaErReachPp = p && r.erReach!=='' && p.erReach!=='' ? round(r.erReach-p.erReach,4) : '';
-    r.deltaErReachPct = p && p.erReach ? pct(r.deltaErReachPp,p.erReach) : '';
-    if(r.netGrowth!=='' && p?.members) r.growthPct = pct(r.netGrowth,p.members);
-    if(r.members && r.subscribed==='' && r.unsubscribed==='') r.warnings.push('Исторические подписчики недоступны: показан текущий members_count, не значение на конец недели');
-  }
-  const forecastMembers = forecast(rows.map(r=>Number(r.members)||0),4);
-  const forecastViews = forecast(rows.map(r=>Number(r.views)||0),1);
-  for(const r of rows){ r.forecastMembers=forecastMembers; r.forecastViews=forecastViews; const rec=recommend(r); r.recWhat=rec.what; r.recWhen=rec.when; r.recFocus=rec.focus; }
-  return rows;
-}
-function forecast(vals, steps){ const clean=vals.filter(Boolean); if(clean.length<2) return ''; const diffs=[]; for(let i=1;i<clean.length;i++) diffs.push(clean[i]-clean[i-1]); return round(clean[clean.length-1]+avg(diffs)*steps,0); }
-function recommend(r){
-  const what = r.bestFormat ? `Усилить формат: ${r.bestFormat}. Он даёт лучший средний результат по просмотрам/вовлечению.` : 'Накопить больше постов для рекомендации по формату.';
-  const when = r.bestDay||r.bestHour ? `Пробовать публикации: ${r.bestDay || 'лучший день не определён'}, ${r.bestHour ? r.bestHour+':00 UTC' : 'час не определён'}.` : 'Накопить больше постов для рекомендации по времени.';
-  let focus = 'Фокус: регулярность публикаций и тест форматов.';
-  if(Number(r.discussion)>Number(r.likeability)) focus='Фокус: темы, вызывающие обсуждение; комментарии сильнее лайков.';
-  if(Number(r.virality)>1) focus='Фокус: репостопригодные посты — вирусность выше обычной.';
-  return {what,when,focus};
-}
-
-function summaryRow(r){ return [r.key,r.collectedAt,r.ws,r.we,r.group.id,r.group.screen_name||'',r.group.name,r.members,r.posts,r.views,r.likes,r.comments,r.reposts,r.engagement,r.erSubs,r.erViews,r.erReach,r.reachShare,r.visitors,r.communityViews,r.reachTotal,r.reachSubs,r.reachMobile,r.subscribed,r.unsubscribed,r.netGrowth,r.growthPct,r.deltaMembers,r.deltaMembersPct,r.deltaReach,r.deltaReachPct,r.deltaImpr,r.deltaImprPct,r.deltaErReachPp,r.deltaErReachPct,r.avgViews,r.medViews,r.bestViewsPost?.id||'',r.bestViewsPost?postLink(r.group,r.bestViewsPost):'',r.bestViews,r.bestEngPost?.id||'',r.bestErPost?.id||'',r.virality,r.discussion,r.likeability,r.engagementIndex,r.viralPosts,r.viralPct,r.stdViews,r.postsPerDay,r.bestDay,r.bestHour,r.bestFormat,r.forecastMembers,r.forecastViews,r.recWhat,r.recWhen,r.recFocus,r.source,r.warnings.join('; ')]; }
-function postRows(group, weekKey, posts){ return posts.map(p=>{ const v=p.views?.count||0,l=p.likes?.count||0,c=p.comments?.count||0,r=p.reposts?.count||0,e=l+c+r; const d=new Date(p.date*1000); const weighted=l*CFG.weights.like+c*CFG.weights.comment+r*CFG.weights.repost; return [weekKey, iso(d), group.id, group.name, p.id, postLink(group,p), postType(p), dayRu(d), d.getUTCHours(), (p.text||'').slice(0,500), v,l,c,r,e,pct(e,v),pct(r,v),pct(c,v),pct(l,v),pct(weighted,v),'']; }); }
-function dashRow(r){ return [r.ws,r.group.name,r.members,r.posts,r.views,r.engagement,r.erSubs,r.erViews,r.erReach,r.reachTotal,r.reachSubs,r.reachShare,r.virality,r.discussion,r.likeability,r.engagementIndex,r.bestFormat,r.bestDay,r.bestHour,r.recWhat,r.recWhen,r.warnings.join('; ')]; }
-function recRows(r){ return [[r.collectedAt,r.group.id,r.group.name,`${r.ws}..${r.we}`,r.recWhat,`Лучший формат: ${r.bestFormat || 'нет данных'}`,'Высокий'],[r.collectedAt,r.group.id,r.group.name,`${r.ws}..${r.we}`,r.recWhen,`Лучший день/час: ${r.bestDay || '-'} ${r.bestHour || '-'}`,'Средний'],[r.collectedAt,r.group.id,r.group.name,`${r.ws}..${r.we}`,r.recFocus,`Вирусность=${r.virality}; обсуждаемость=${r.discussion}; лайкабельность=${r.likeability}`,'Средний']]; }
-
-async function sheets(){ const auth=new google.auth.JWT(CFG.serviceEmail,null,CFG.privateKey,['https://www.googleapis.com/auth/spreadsheets']); return google.sheets({version:'v4',auth}); }
-async function ensureSheet(api, title, headers){
-  const meta=await api.spreadsheets.get({spreadsheetId:CFG.sheetId});
-  const exists=meta.data.sheets?.some(s=>s.properties?.title===title);
-  if(!exists) await api.spreadsheets.batchUpdate({spreadsheetId:CFG.sheetId, requestBody:{requests:[{addSheet:{properties:{title}}}]}});
-  await api.spreadsheets.values.update({spreadsheetId:CFG.sheetId, range:`'${title}'!A1`, valueInputOption:'RAW', requestBody:{values:[headers]}});
-}
-async function readSheet(api,title){ const res=await api.spreadsheets.values.get({spreadsheetId:CFG.sheetId, range:`'${title}'!A2:ZZ`}).catch(()=>({data:{values:[]}})); return res.data.values||[]; }
-async function replaceRows(api,title,headers,rows){ await ensureSheet(api,title,headers); await api.spreadsheets.values.clear({spreadsheetId:CFG.sheetId, range:`'${title}'!A2:ZZ`}); if(rows.length) await api.spreadsheets.values.update({spreadsheetId:CFG.sheetId, range:`'${title}'!A2`, valueInputOption:'RAW', requestBody:{values:rows}}); }
-
-function weekRange(posts){
-  const lastFull = monday(new Date()); lastFull.setUTCDate(lastFull.getUTCDate()-7);
-  let first = new Date(Date.now()-CFG.daysBack*86400000);
-  if(CFG.backfillFrom) first = new Date(CFG.backfillFrom+'T00:00:00Z');
-  if(posts.length){ const oldest=new Date(Math.min(...posts.map(p=>p.date))*1000); if(!CFG.backfillFrom && oldest>first) first=oldest; }
-  let start=monday(first); const weeks=[];
-  while(start<=lastFull){ weeks.push(new Date(start)); start.setUTCDate(start.getUTCDate()+7); }
+function buildWeeks(startDate, lastWeek){
+  const weeks=[]; let cur=mondayUtcForDate(startDate);
+  while(cur<=lastWeek.start){ const end=new Date(cur.getTime()+7*86400000-1000); weeks.push({start:new Date(cur),end}); cur=new Date(cur.getTime()+7*86400000); }
   return weeks;
 }
 
-async function main(){
-  console.log(`VK metrics sync v8 started. Groups=${CFG.groups.length}`);
-  const api=await sheets();
-  for(const [title,headers] of [[CFG.summarySheet,SUMMARY_HEADERS],[CFG.postsSheet,POSTS_HEADERS],[CFG.dashboardSheet,DASH_HEADERS],[CFG.recSheet,REC_HEADERS]]) await ensureSheet(api,title,headers);
-  let allSummary=[], allPosts=[], allDash=[], allRecs=[];
-  for(const gid of CFG.groups){
-    console.log(`Получение группы: ${gid}`);
-    const group=await fetchGroup(gid);
-    console.log(`Группа: ${group.name} (${group.id}), подписчики сейчас: ${group.members_count}`);
-    const posts=await fetchPosts(group);
-    const weeks=weekRange(posts);
-    console.log(`${group.name}: найдено постов=${posts.length}, недель=${weeks.length}`);
-    const rows=[]; const postsRows=[];
-    for(const ws of weeks){
-      const we=weekEnd(ws); const weekPosts=posts.filter(p=>p.date>=unix(ws) && p.date<=unix(we));
-      const stat=await fetchStats(group.id,ws,we);
-      const row=aggregateWeek(group,ws,weekPosts,stat,group.members_count);
-      rows.push(row); postsRows.push(...postRows(group,row.key,weekPosts));
-    }
-    addDeltas(rows);
-    allSummary.push(...rows.map(summaryRow)); allPosts.push(...postsRows); allDash.push(...rows.map(dashRow)); allRecs.push(...rows.flatMap(recRows));
-    const last=rows[rows.length-1]; if(last) console.log(`${group.name}: последняя неделя ${last.ws}, постов=${last.posts}, просмотров=${last.views}, предупреждения=${last.warnings.length}`);
+async function vkApi(method, params={}, delayMs=cfg.requestDelayMs){
+  let lastErr;
+  for(let attempt=0; attempt<cfg.retryMax; attempt++){
+    await sleep(delayMs + attempt*150);
+    try{
+      const {data} = await axios.get(`https://api.vk.com/method/${method}`, { params:{...params, access_token:cfg.vkToken, v:'5.199'}, timeout:30000 });
+      if(data.error){
+        const code=data.error.error_code;
+        const msg=data.error.error_msg;
+        if(code===6 || code===10){ lastErr=new Error(`VK API ${method}: [${code}] ${msg}`); await sleep(1200*(attempt+1)); continue; }
+        throw new Error(`VK API ${method}: [${code}] ${msg}. Params=${JSON.stringify(params)} Raw=${JSON.stringify(data.error)}`);
+      }
+      return data.response;
+    }catch(e){ lastErr=e; if(attempt===cfg.retryMax-1) break; await sleep(1000*(attempt+1)); }
   }
-  await replaceRows(api,CFG.summarySheet,SUMMARY_HEADERS,allSummary);
-  await replaceRows(api,CFG.postsSheet,POSTS_HEADERS,allPosts);
-  await replaceRows(api,CFG.dashboardSheet,DASH_HEADERS,allDash);
-  await replaceRows(api,CFG.recSheet,REC_HEADERS,allRecs);
-  console.log('Синхронизация v8 завершена. Листы обновлены: weekly_summary, posts_raw_vk, dashboard_data, ai_recommendations');
+  throw lastErr;
 }
 
-main().catch(err=>{ console.error('Сбой синхронизации v8.'); console.error(err); process.exit(1); });
+async function fetchGroup(raw){
+  const id=normalizeGroupId(raw);
+  let response, group;
+  try{ response=await vkApi('groups.getById',{group_ids:id, fields:'members_count,screen_name'}); group=Array.isArray(response)?response[0]:response?.groups?.[0]; }catch(e){ console.warn(`groups.getById group_ids не сработал для ${id}: ${e.message}`); }
+  if(!group){ response=await vkApi('groups.getById',{group_id:id, fields:'members_count,screen_name'}); group=Array.isArray(response)?response[0]:response?.groups?.[0]; }
+  if(!group?.id) throw new Error(`Не удалось получить группу ${id}. Ответ=${JSON.stringify(response)}`);
+  return {...group, input:id, screen_name: group.screen_name || id};
+}
+
+async function fetchWallPosts(groupId){
+  const all=[]; let offset=0; const count=100; const max=1000;
+  while(offset<max){
+    const res=await vkApi('wall.get',{owner_id:-groupId, count, offset, filter:'owner'});
+    const items=res?.items || [];
+    all.push(...items.filter(p=>!p.is_pinned));
+    if(items.length<count) break;
+    offset += count;
+  }
+  return all;
+}
+
+function parseStatNumber(day, paths){
+  for(const path of paths){
+    let v=day;
+    for(const k of path.split('.')) v = v?.[k];
+    if(typeof v==='number') return v;
+  }
+  return null;
+}
+async function fetchStatsWeek(groupId, week){
+  if(!cfg.enableStats) return {available:false, warning:'stats.get отключён'};
+  try{
+    const response = await vkApi('stats.get',{group_id:groupId, timestamp_from:unix(week.start), timestamp_to:unix(week.end), interval:'day'}, cfg.statsDelayMs);
+    const days = Array.isArray(response) ? response : [];
+    if(!days.length) return {available:false, warning:'stats.get вернул пустой ответ'};
+    const total = {visitors:0, views:0, reachTotal:0, reachSubscribers:0, reachMobile:0, subscribed:0, unsubscribed:0};
+    let seen = {visitors:false, views:false, reachTotal:false, reachSubscribers:false, reachMobile:false, subscribed:false, unsubscribed:false};
+    for(const d of days){
+      const vals = {
+        visitors: parseStatNumber(d,['visitors.visitors','visitors.count','visitors']),
+        views: parseStatNumber(d,['visitors.views','views','activity.views']),
+        reachTotal: parseStatNumber(d,['reach.reach','reach.total','reach_total','reach']),
+        reachSubscribers: parseStatNumber(d,['reach.reach_subscribers','reach.subscribers','reach_subscribers']),
+        reachMobile: parseStatNumber(d,['reach.mobile_reach','reach.mobile','reach_mobile']),
+        subscribed: parseStatNumber(d,['activity.subscribed','subscribed']),
+        unsubscribed: parseStatNumber(d,['activity.unsubscribed','unsubscribed'])
+      };
+      for(const [k,v] of Object.entries(vals)){ if(v!=null){ seen[k]=true; total[k]+=v; } }
+    }
+    for(const k of Object.keys(total)) if(!seen[k]) total[k]=null;
+    return {available:true, ...total, warning:null};
+  }catch(e){
+    return {available:false, warning:`stats.get недоступен: ${e.message}`};
+  }
+}
+
+function classifyPost(p){
+  const a=p.attachments||[];
+  if(p.copy_history?.length) return 'repost';
+  if(a.some(x=>x.type==='clip')) return 'clip';
+  if(a.some(x=>x.type==='video')) return 'video';
+  if(a.some(x=>x.type==='photo')) return 'image';
+  if((p.text||'').trim()) return 'text';
+  return 'other';
+}
+function aggregatePosts(posts, week){
+  const weekPosts = posts.filter(p=>p.date>=unix(week.start) && p.date<=unix(week.end));
+  const views = weekPosts.map(p=>p.views?.count ?? 0);
+  const likes=sum(weekPosts.map(p=>p.likes?.count ?? 0));
+  const comments=sum(weekPosts.map(p=>p.comments?.count ?? 0));
+  const reposts=sum(weekPosts.map(p=>p.reposts?.count ?? 0));
+  const postViews=sum(views);
+  const engagement=likes+comments+reposts;
+  const bestByViews=[...weekPosts].sort((a,b)=>(b.views?.count??0)-(a.views?.count??0))[0] || null;
+  const bestByEng=[...weekPosts].sort((a,b)=>((b.likes?.count??0)+(b.comments?.count??0)+(b.reposts?.count??0))-((a.likes?.count??0)+(a.comments?.count??0)+(a.reposts?.count??0)))[0] || null;
+  const bestByEr=[...weekPosts].sort((a,b)=>pct((b.likes?.count??0)+(b.comments?.count??0)+(b.reposts?.count??0), b.views?.count??0)-pct((a.likes?.count??0)+(a.comments?.count??0)+(a.reposts?.count??0), a.views?.count??0))[0] || null;
+  const med=median(views); const viralCount = med ? weekPosts.filter(p=>(p.views?.count??0)>med*2).length : 0;
+  const byHour={}; const byDay={}; const byType={};
+  for(const p of weekPosts){
+    const v=p.views?.count??0; const e=(p.likes?.count??0)+(p.comments?.count??0)+(p.reposts?.count??0); const h=hourTz(p.date); const d=weekdayTz(p.date); const t=classifyPost(p);
+    byHour[h]=(byHour[h]||{views:0,eng:0,count:0}); byHour[h].views+=v; byHour[h].eng+=e; byHour[h].count++;
+    byDay[d]=(byDay[d]||{views:0,eng:0,count:0}); byDay[d].views+=v; byDay[d].eng+=e; byDay[d].count++;
+    byType[t]=(byType[t]||{views:0,eng:0,count:0}); byType[t].views+=v; byType[t].eng+=e; byType[t].count++;
+  }
+  const bestHour = bestBucket(byHour); const bestDay = bestBucket(byDay); const bestType = bestBucket(byType);
+  return {weekPosts, count:weekPosts.length, postViews, likes, comments, reposts, engagement, avgViews:avg(views), medianViews:med, stdViews:std(views), bestByViews, bestByEng, bestByEr, viralCount, viralPct:pct(viralCount, weekPosts.length), bestHour, bestDay, bestType, byType};
+}
+function bestBucket(obj){
+  return Object.entries(obj).sort((a,b)=>((b[1].views/(b[1].count||1))- (a[1].views/(a[1].count||1))))[0]?.[0] ?? '';
+}
+
+async function sheetsClient(){
+  const auth = new google.auth.JWT(cfg.serviceEmail, undefined, cfg.privateKey, ['https://www.googleapis.com/auth/spreadsheets']);
+  return google.sheets({version:'v4', auth});
+}
+async function ensureSheet(sheets, title){
+  const meta=await sheets.spreadsheets.get({spreadsheetId:cfg.spreadsheetId});
+  if(!meta.data.sheets.some(s=>s.properties.title===title)){
+    await sheets.spreadsheets.batchUpdate({spreadsheetId:cfg.spreadsheetId, requestBody:{requests:[{addSheet:{properties:{title}}}]}});
+  }
+}
+async function writeSheet(title, headers, rows){
+  const sheets=await sheetsClient(); await ensureSheet(sheets,title);
+  await sheets.spreadsheets.values.clear({spreadsheetId:cfg.spreadsheetId, range:`${title}!A:ZZ`});
+  await sheets.spreadsheets.values.update({spreadsheetId:cfg.spreadsheetId, range:`${title}!A1`, valueInputOption:'USER_ENTERED', requestBody:{values:[headers, ...rows]}});
+}
+async function readExisting(title){
+  try{
+    const sheets=await sheetsClient();
+    const res=await sheets.spreadsheets.values.get({spreadsheetId:cfg.spreadsheetId, range:`${title}!A1:ZZ`});
+    const values=res.data.values||[]; if(values.length<2) return [];
+    const headers=values[0]; return values.slice(1).map(r=>Object.fromEntries(headers.map((h,i)=>[h,r[i]??''])));
+  }catch{ return []; }
+}
+
+function buildPostRows(group, weekKeyStr, ag){
+  return ag.weekPosts.map(p=>{
+    const e=(p.likes?.count??0)+(p.comments?.count??0)+(p.reposts?.count??0);
+    return [weekKeyStr, fmtDateTz(new Date(p.date*1000)), group.id, group.screen_name, group.name, p.id, wallPostLink(group.id,p.id), classifyPost(p), (p.text||'').replace(/\s+/g,' ').slice(0,200), p.views?.count??0, p.likes?.count??0, p.comments?.count??0, p.reposts?.count??0, e, nvl(pct(e,p.views?.count??0)), hourTz(p.date), weekdayTz(p.date)];
+  });
+}
+
+function generateRecommendations(group, weekRows, lastAgg){
+  const rows=[]; const now=fmtDateTz(new Date()); const period=weekRows.length?`${weekRows[0]['Неделя с']}..${weekRows.at(-1)['Неделя по']}`:'';
+  const latest=weekRows.at(-1)||{};
+  const bestType=latest['Лучший формат'] || lastAgg.bestType || '';
+  const bestTime=[latest['Лучший день публикации'], latest['Лучший час публикации']].filter(Boolean).join(' ');
+  if(bestType) rows.push([now, group.id, group.name, period, `Усилить формат: ${bestType}`, `Формат ${bestType} показал лучший средний результат по просмотрам/вовлечению за последние обработанные недели.`, 'Высокий']);
+  if(bestTime) rows.push([now, group.id, group.name, period, `Публиковать чаще в лучшие окна: ${bestTime} (${cfg.tzLabel})`, 'Рекомендация построена по фактическим просмотрам постов с учётом часового пояса отчёта.', 'Высокий']);
+  const er = num(latest['ER по просмотрам, %']);
+  const posts = num(latest['Публикации']);
+  if(posts!=null && posts<10) rows.push([now, group.id, group.name, period, 'Проверить увеличение частоты публикаций', `За последнюю неделю ${posts} публикаций. Можно протестировать +2–3 поста/неделю без резкого изменения формата.`, 'Средний']);
+  if(er!=null && er<3) rows.push([now, group.id, group.name, period, 'Добавить механики вовлечения', `ER по просмотрам ${er}%. Добавить вопросы, выборы, просьбы комментировать, подборки и сравнения.`, 'Высокий']);
+  if((latest['Предупреждения']||'').includes('stats.get')) rows.push([now, group.id, group.name, period, 'Не опираться на охваты как на точную метрику', 'VK не отдал stats.get полностью; охват/показы могут быть fallback от просмотров постов. Для управленческих решений использовать ER view и просмотры постов.', 'Высокий']);
+  return rows;
+}
+function generateInsights(group, weekRows){
+  const now=fmtDateTz(new Date()); const period=weekRows.length?`${weekRows[0]['Неделя с']}..${weekRows.at(-1)['Неделя по']}`:'';
+  const last=weekRows.at(-1)||{}; const prev=weekRows.at(-2)||{};
+  const v=num(last['Просмотры постов']); const pv=num(prev['Просмотры постов']);
+  const er=num(last['ER по просмотрам, %']); const per=num(prev['ER по просмотрам, %']);
+  let trend='недостаточно данных'; let conclusion='Нужно накопить больше недель.';
+  if(v!=null && pv!=null){ const d=v-pv; trend=d>0?'рост просмотров':d<0?'падение просмотров':'стабильность'; conclusion=`Просмотры WoW: ${d>0?'+':''}${d}. ER view: ${er??'н/д'}%.`; }
+  const risk = (er!=null && per!=null && er<per) ? 'Падает ER по просмотрам: аудитория реагирует слабее.' : 'Критичных рисков по ER не выявлено.';
+  const opportunity = last['Лучший формат'] ? `Масштабировать формат ${last['Лучший формат']} и время ${last['Лучший час публикации']} (${cfg.tzLabel}).` : 'Накопить данные по форматам и времени.';
+  return [[now, group.id, group.name, period, trend, conclusion, risk, opportunity]];
+}
+function num(v){ if(v===''||v==null) return null; const n=Number(String(v).replace(',','.')); return Number.isFinite(n)?n:null; }
+
+async function main(){
+  const {start:lastStart,end:lastEnd}=lastFullWeekUtc();
+  console.log(`VK metrics sync v8.2 started. TZ=${cfg.tz}. Последняя полная неделя: ${isoDate(lastStart)}..${isoDate(lastEnd)}`);
+  const existingSummary = await readExisting(cfg.summarySheet);
+  const existingMap = new Map(existingSummary.map(r=>[r['Ключ'], r]));
+  let allSummaryRows=[]; let allPostRows=[]; let allRecRows=[]; let allInsightRows=[];
+
+  for(const rawGroup of cfg.groups){
+    const group=await fetchGroup(rawGroup);
+    console.log(`Группа: ${group.name} (${group.id}), текущие подписчики=${group.members_count}`);
+    const posts=await fetchWallPosts(group.id);
+    const earliestPostDate = posts.length ? new Date(Math.min(...posts.map(p=>p.date))*1000) : new Date(Date.now()-cfg.daysBack*86400000);
+    const backfillDate = cfg.backfillFrom ? new Date(`${cfg.backfillFrom}T00:00:00Z`) : new Date(Math.max(Date.now()-cfg.daysBack*86400000, earliestPostDate.getTime()));
+    const weeks=buildWeeks(backfillDate,{start:lastStart,end:lastEnd});
+    console.log(`${group.name}: постов загружено=${posts.length}, недель=${weeks.length}`);
+
+    const tmpRows=[];
+    for(const week of weeks){
+      const key=weekKey(group.id, week.start);
+      const ag=aggregatePosts(posts,week);
+      const stat=await fetchStatsWeek(group.id, week);
+      const warnings=[];
+      if(!stat.available) warnings.push(stat.warning || 'stats.get недоступен');
+
+      const statsNet = stat.available && (stat.subscribed!=null || stat.unsubscribed!=null) ? (stat.subscribed||0)-(stat.unsubscribed||0) : null;
+      let subscribersEnd=null;
+      if(existingMap.has(key) && existingMap.get(key)['Подписчики на конец недели']) subscribersEnd=num(existingMap.get(key)['Подписчики на конец недели']);
+      else warnings.push('исторические подписчики не восстановлены: нет сохранённого снимка и/или подписок/отписок из stats.get');
+
+      let communityViews = stat.views;
+      let reachTotal = stat.reachTotal;
+      let reachSource = 'stats.get';
+      if(reachTotal==null && ag.postViews>0){ reachTotal=ag.postViews; reachSource='fallback: просмотры постов'; warnings.push('охват всего рассчитан через просмотры постов, не точный reach VK'); }
+      if(communityViews==null && ag.postViews>0){ communityViews=ag.postViews; warnings.push('показы сообщества заменены просмотрами постов, потому что stats.get не отдал показы'); }
+
+      const erSubs = subscribersEnd ? pct(ag.engagement, subscribersEnd) : null;
+      const erViews = pct(ag.engagement, ag.postViews);
+      const erReach = pct(ag.engagement, reachTotal);
+      const reachSubShare = stat.reachSubscribers!=null && subscribersEnd ? pct(stat.reachSubscribers, subscribersEnd) : null;
+      const bestViews = ag.bestByViews?.views?.count ?? null;
+      const bestViewsId = ag.bestByViews?.id ?? '';
+      const bestEngId = ag.bestByEng?.id ?? '';
+      const bestErId = ag.bestByEr?.id ?? '';
+
+      const rowObj = Object.fromEntries(SUMMARY_HEADERS.map(h=>[h,'']));
+      Object.assign(rowObj, {
+        'Ключ': key, 'Дата сбора': fmtDateTz(new Date()), 'Неделя с': isoDate(week.start), 'Неделя по': isoDate(week.end),
+        'ID группы': group.id, 'Короткое имя группы': group.screen_name, 'Название группы': group.name,
+        'Подписчики на конец недели': nvl(subscribersEnd), 'Публикации': ag.count, 'Просмотры постов': ag.postViews,
+        'Лайки': ag.likes, 'Комментарии': ag.comments, 'Репосты': ag.reposts, 'Вовлеченность': ag.engagement,
+        'ER по подписчикам, %': nvl(erSubs), 'ER по просмотрам, %': nvl(erViews), 'ER по охвату, %': nvl(erReach),
+        'Доля охвата подписчиков к подписчикам, %': nvl(reachSubShare),
+        'Посетители сообщества': nvl(stat.visitors), 'Просмотры/показы сообщества': nvl(communityViews),
+        'Охват всего': nvl(reachTotal), 'Охват подписчиков': nvl(stat.reachSubscribers), 'Охват мобильный': nvl(stat.reachMobile),
+        'Подписались': nvl(stat.subscribed), 'Отписались': nvl(stat.unsubscribed), 'Чистый прирост подписчиков': nvl(statsNet),
+        'Прирост подписчиков за неделю, %': '',
+        'Средние просмотры поста': nvl(round(ag.avgViews,2)), 'Медианные просмотры поста': nvl(round(ag.medianViews,2)),
+        'Лучший пост недели, ID': bestViewsId, 'Лучший пост недели, ссылка': bestViewsId ? wallPostLink(group.id,bestViewsId) : '', 'Лучший пост недели: просмотры': nvl(bestViews),
+        'Лучший пост по вовлеченности, ID': bestEngId, 'Лучший пост по ER, ID': bestErId,
+        'Вирусность, %': nvl(pct(ag.reposts, ag.postViews)), 'Обсуждаемость, %': nvl(pct(ag.comments, ag.postViews)),
+        'Лайкабельность, %': nvl(pct(ag.likes, ag.postViews)), 'Индекс вовлеченности': nvl(pct(ag.likes + 2*ag.comments + 3*ag.reposts, ag.postViews)),
+        'Вирусные посты, шт.': ag.viralCount, 'Вирусные посты, %': nvl(ag.viralPct), 'Стд. отклонение просмотров': nvl(round(ag.stdViews,2)),
+        'Частота постинга, постов/день': round(ag.count/7,3), 'Лучший день публикации': ag.bestDay, 'Лучший час публикации': ag.bestHour,
+        'Лучший формат': ag.bestType, 'Источник охвата': reachSource, 'Предупреждения': [...new Set(warnings)].join('; ')
+      });
+      tmpRows.push(rowObj);
+      allPostRows.push(...buildPostRows(group,key,ag));
+    }
+
+    // If stats contains net growth, reconstruct subscribers for weeks where possible from current count backwards.
+    let knownCurrent = Number(group.members_count) || null;
+    let futureDelta = 0;
+    for(let i=tmpRows.length-1; i>=0; i--){
+      const r=tmpRows[i]; const net=num(r['Чистый прирост подписчиков']);
+      if(r['Подписчики на конец недели']==='' && knownCurrent!=null && net!=null){
+        const estimated = knownCurrent - futureDelta;
+        r['Подписчики на конец недели'] = estimated;
+        r['Предупреждения'] = appendWarn(r['Предупреждения'], 'подписчики восстановлены приблизительно от текущего значения и net growth stats.get');
+      }
+      if(net!=null) futureDelta += net;
+    }
+
+    // Deltas and forecasts.
+    for(let i=0;i<tmpRows.length;i++){
+      const r=tmpRows[i], p=tmpRows[i-1];
+      const subs=num(r['Подписчики на конец недели']), prevSubs=num(p?.['Подписчики на конец недели']);
+      const net=num(r['Чистый прирост подписчиков']);
+      if(net!=null && prevSubs) r['Прирост подписчиков за неделю, %']=nvl(pct(net, prevSubs));
+      r['Дельта подписчиков WoW, абс.']=nvl(safeDelta(subs,prevSubs));
+      r['Дельта подписчиков WoW, %']=nvl(safeDeltaPct(subs,prevSubs));
+      r['Дельта охвата WoW, абс.']=nvl(safeDelta(num(r['Охват всего']),num(p?.['Охват всего'])));
+      r['Дельта охвата WoW, %']=nvl(safeDeltaPct(num(r['Охват всего']),num(p?.['Охват всего'])));
+      r['Дельта показов WoW, абс.']=nvl(safeDelta(num(r['Просмотры/показы сообщества']),num(p?.['Просмотры/показы сообщества'])));
+      r['Дельта показов WoW, %']=nvl(safeDeltaPct(num(r['Просмотры/показы сообщества']),num(p?.['Просмотры/показы сообщества'])));
+      r['Дельта ER по охвату WoW, п.п.']=nvl(safeDelta(num(r['ER по охвату, %']),num(p?.['ER по охвату, %'])));
+      r['Дельта ER по охвату WoW, %']=nvl(safeDeltaPct(num(r['ER по охвату, %']),num(p?.['ER по охвату, %'])));
+      const recent=tmpRows.slice(Math.max(0,i-3),i+1);
+      r['Прогноз просмотров постов на следующую неделю']=nvl(round(avg(recent.map(x=>num(x['Просмотры постов'])).filter(x=>x!=null)),0));
+      const subSeries=recent.map(x=>num(x['Подписчики на конец недели'])).filter(x=>x!=null);
+      r['Прогноз подписчиков на следующую неделю']=subSeries.length? nvl(round(subSeries.at(-1)+(avg(subSeries.slice(1).map((x,j)=>x-subSeries[j]))||0),0)) : '';
+      r['AI рекомендация: контент']=recommendContent(r);
+      r['AI рекомендация: частота']=recommendFrequency(r);
+      r['AI рекомендация: время']=recommendTime(r);
+    }
+
+    allSummaryRows.push(...tmpRows.map(obj=>SUMMARY_HEADERS.map(h=>nvl(obj[h]))));
+    allRecRows.push(...generateRecommendations(group,tmpRows,tmpRows.at(-1)||{}));
+    allInsightRows.push(...generateInsights(group,tmpRows));
+  }
+
+  allSummaryRows.sort((a,b)=>String(a[4]).localeCompare(String(b[4])) || String(a[2]).localeCompare(String(b[2])));
+  await writeSheet(cfg.summarySheet, SUMMARY_HEADERS, allSummaryRows);
+  await writeSheet(cfg.postsSheet, POSTS_HEADERS, allPostRows);
+  await writeSheet(cfg.dashboardSheet, SUMMARY_HEADERS.filter(h=>!['Предупреждения'].includes(h)), allSummaryRows.map(r=>r.slice(0, SUMMARY_HEADERS.length-1)));
+  await writeSheet(cfg.recommendationsSheet, REC_HEADERS, allRecRows);
+  await writeSheet(cfg.insightsSheet, INSIGHT_HEADERS, allInsightRows);
+  console.log('Синхронизация v8.2 завершена успешно.');
+}
+function appendWarn(a,b){ return [a,b].filter(Boolean).join('; '); }
+function recommendContent(r){ const f=r['Лучший формат']; const er=num(r['ER по просмотрам, %']); if(f && er!=null) return `Усилить ${f}: лучший формат недели, ER view ${er}%`; if(f) return `Тестировать больше ${f}`; return 'Накопить данные по форматам'; }
+function recommendFrequency(r){ const freq=num(r['Частота постинга, постов/день']); if(freq==null) return ''; if(freq<1.5) return 'Плавно увеличить частоту: +2–3 поста в неделю'; if(freq>4) return 'Проверить усталость аудитории: высокая частота'; return 'Частота выглядит сбалансированной'; }
+function recommendTime(r){ const h=r['Лучший час публикации']; const d=r['Лучший день публикации']; return h!=='' ? `Публиковать в ${d || 'лучшие дни'} около ${h}:00 (${cfg.tzLabel})` : 'Накопить данные по времени публикаций'; }
+
+main().catch(e=>{ console.error('Сбой синхронизации v8.2.'); console.error(e?.stack || e?.message || e); process.exit(1); });
