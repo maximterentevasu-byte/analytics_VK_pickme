@@ -89,20 +89,29 @@ async function vkApi(method, params, token) {
 
   const response = await fetch(url, {
     method: 'GET',
-    headers: { Accept: 'application/json', 'User-Agent': 'vk-sheets-metrics-sync/2.0' }
+    headers: { Accept: 'application/json', 'User-Agent': 'vk-sheets-metrics-sync/3.3' }
   });
 
   if (!response.ok) throw new Error(`VK HTTP ${response.status} for ${method}`);
 
-  const data = await response.json();
+  let data;
+  try {
+    data = await response.json();
+  } catch (error) {
+    throw new Error(`VK returned non-JSON response for ${method}: ${error.message}`);
+  }
+
   if (data.error) {
     const code = data.error.error_code ?? 'unknown';
     const msg = data.error.error_msg ?? 'Unknown VK API error';
+    const safeParams = { ...params };
+    console.error(`VK API error in ${method}: [${code}] ${msg}`);
+    console.error(`VK method params: ${JSON.stringify(safeParams)}`);
+    console.error(`VK raw error: ${JSON.stringify(data.error)}`);
     throw new Error(`VK API error in ${method}: [${code}] ${msg}`);
   }
   return data.response;
 }
-
 function extractGroup(response) {
   if (Array.isArray(response)) return response[0] || null;
   if (response?.groups && Array.isArray(response.groups)) return response.groups[0] || null;
@@ -114,18 +123,25 @@ async function fetchVkGroup(rawGroupId, token) {
   const groupId = normalizeVkGroupId(rawGroupId);
   let group = null;
   let lastResponse = null;
+  let firstError = null;
 
+  // For user tokens, group_ids is usually safer. group_id remains as fallback.
   try {
-    lastResponse = await vkApi('groups.getById', { group_id: groupId, fields: 'members_count,screen_name' }, token);
+    lastResponse = await vkApi('groups.getById', { group_ids: groupId, fields: 'members_count,screen_name' }, token);
     group = extractGroup(lastResponse);
   } catch (error) {
+    firstError = error;
     if (!String(error.message).includes('VK API error')) throw error;
-    lastResponse = null;
   }
 
   if (!group) {
-    lastResponse = await vkApi('groups.getById', { group_ids: groupId, fields: 'members_count,screen_name' }, token);
-    group = extractGroup(lastResponse);
+    try {
+      lastResponse = await vkApi('groups.getById', { group_id: groupId, fields: 'members_count,screen_name' }, token);
+      group = extractGroup(lastResponse);
+    } catch (error) {
+      if (firstError) console.error(`First groups.getById attempt also failed: ${firstError.message}`);
+      throw error;
+    }
   }
 
   if (!group) {
@@ -141,7 +157,6 @@ async function fetchVkGroup(rawGroupId, token) {
     members_count: Number(group.members_count || 0)
   };
 }
-
 function classifyPost(post) {
   const types = (post.attachments || []).map((a) => a.type).filter(Boolean);
   if (types.includes('video')) return 'video_or_clip';
@@ -367,7 +382,7 @@ async function main() {
   const untilUnix = toEpochSeconds(now);
   const collectedAt = now.toISOString();
 
-  console.log(`VK metrics sync v3.2 started for ${groupIds.length} group(s), period ${dates.dateFrom}..${dates.dateTo}`);
+  console.log(`VK metrics sync v3.3 started for ${groupIds.length} group(s), period ${dates.dateFrom}..${dates.dateTo}`);
 
   const summaryRows = [];
   const allPostRows = [];
