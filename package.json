@@ -1,10 +1,14 @@
 {
   "name": "vk-sheets-metrics-sync",
-  "version": "8.2.0",
+  "version": "9.1.0",
+  "description": "VK weekly analytics sync to Google Sheets with dashboard, AI recommendations, clips, audience and forecast sheets",
   "type": "module",
   "main": "src/index.js",
   "scripts": {
     "start": "node src/index.js"
+  },
+  "engines": {
+    "node": ">=20"
   },
   "dependencies": {
     "axios": "^1.7.9",
