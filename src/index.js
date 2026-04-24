@@ -180,8 +180,16 @@ async function fetchWallPostsForPeriod(group, token, fromUnix, untilUnix) {
 
     for (const post of items) {
       if (!post.date) continue;
+
+      // VK can return a pinned post as the first item even when it is older than the report period.
+      // Do not stop pagination on an old pinned post; just skip it and keep reading the real feed.
+      if (post.is_pinned) continue;
+
+      // For regular wall items the feed is ordered newest -> oldest, so after the first old
+      // non-pinned post we can stop safely.
       if (post.date < fromUnix) return posts;
-      if (post.date <= untilUnix && post.date >= fromUnix && !post.is_pinned && post.post_type !== 'copy') posts.push(post);
+
+      if (post.date <= untilUnix && post.date >= fromUnix && post.post_type !== 'copy') posts.push(post);
       if (posts.length >= WALL_MAX_POSTS) break;
     }
 
@@ -382,7 +390,7 @@ async function main() {
   const untilUnix = toEpochSeconds(now);
   const collectedAt = now.toISOString();
 
-  console.log(`VK metrics sync v3.3 started for ${groupIds.length} group(s), period ${dates.dateFrom}..${dates.dateTo}`);
+  console.log(`VK metrics sync v3.4 started for ${groupIds.length} group(s), period ${dates.dateFrom}..${dates.dateTo}`);
 
   const summaryRows = [];
   const allPostRows = [];
