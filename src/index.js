@@ -364,7 +364,7 @@ async function main() {
   const from = new Date(now.getTime() - DAYS_BACK * 24 * 60 * 60 * 1000);
   const dates = { dateFrom: formatDateOnly(from), dateTo: formatDateOnly(now) };
   const fromUnix = toUnix(from);
-  const toUnix = toUnix(now);
+  const untilUnix = toUnix(now);
   const collectedAt = now.toISOString();
 
   console.log(`Starting VK metrics sync for ${groupIds.length} group(s), period ${dates.dateFrom}..${dates.dateTo}`);
@@ -377,7 +377,7 @@ async function main() {
     const group = await fetchVkGroup(rawGroupId, vkToken);
 
     console.log(`Fetching wall posts: ${group.group_name} (${group.group_id})`);
-    const posts = await fetchWallPostsForPeriod(group, vkToken, fromUnix, toUnix);
+    const posts = await fetchWallPostsForPeriod(group, vkToken, fromUnix, untilUnix);
     const postsMetrics = posts.map((post) => postToMetrics(post, group));
 
     console.log(`Fetching community stats: ${ENABLE_STATS ? 'enabled' : 'disabled'}`);
