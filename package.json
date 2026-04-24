@@ -1,18 +1,8 @@
 {
   "name": "vk-sheets-metrics-sync",
-  "version": "7.0.1",
-  "description": "VK weekly metrics sync to Google Sheets with pro analytics and forecasts",
+  "version": "7.2.0",
   "type": "module",
   "main": "src/index.js",
-  "scripts": {
-    "start": "node src/index.js"
-  },
-  "dependencies": {
-    "axios": "^1.7.9",
-    "dotenv": "^16.4.7",
-    "googleapis": "^144.0.0"
-  },
-  "engines": {
-    "node": ">=18"
-  }
+  "scripts": {"start": "node src/index.js"},
+  "dependencies": {"axios": "^1.6.7", "dotenv": "^16.4.5", "googleapis": "^137.0.0"}
 }
