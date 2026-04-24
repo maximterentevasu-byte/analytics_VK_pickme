@@ -1,18 +1,14 @@
 {
   "name": "vk-sheets-metrics-sync",
-  "version": "5.1.0",
-  "description": "Weekly VK community analytics sync to Google Sheets",
+  "version": "7.0.0",
   "type": "module",
   "main": "src/index.js",
   "scripts": {
-    "start": "node src/index.js",
-    "dev": "node --env-file=.env src/index.js"
-  },
-  "engines": {
-    "node": ">=20"
+    "start": "node src/index.js"
   },
   "dependencies": {
-    "dotenv": "^16.4.7",
-    "googleapis": "^144.0.0"
+    "axios": "^1.6.7",
+    "dotenv": "^16.4.5",
+    "googleapis": "^137.0.0"
   }
 }
