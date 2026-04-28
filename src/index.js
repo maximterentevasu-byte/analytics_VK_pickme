@@ -22,20 +22,16 @@ const cfg = {
   serviceEmail: req('GOOGLE_SERVICE_ACCOUNT_EMAIL'),
   privateKey: req('GOOGLE_PRIVATE_KEY').replace(/\\n/g, '\n'),
   sheets: {
-    summary: process.env.GOOGLE_SUMMARY_SHEET_NAME || 'VK_недели',
-    posts: process.env.GOOGLE_POSTS_SHEET_NAME || 'posts_raw_vk',
-    dashboard: process.env.GOOGLE_DASHBOARD_SHEET_NAME || 'dashboard_data',
-    insights: process.env.GOOGLE_AI_INSIGHTS_SHEET_NAME || 'ai_insights',
-    aiPosts: process.env.GOOGLE_AI_POSTS_SHEET_NAME || 'ai_posts',
-    abTests: process.env.GOOGLE_AB_TESTS_SHEET_NAME || 'ab_tests',
-    growth: process.env.GOOGLE_GROWTH_FORECAST_SHEET_NAME || 'growth_forecast',
-    clips: process.env.GOOGLE_CLIPS_SHEET_NAME || 'clips_analytics',
-    audience: process.env.GOOGLE_AUDIENCE_SHEET_NAME || 'audience_weekly',
+    summary: 'VK_недели',
+    posts: 'VK_посты',
+    insights: 'VK_предложения',
+    aiPosts: 'VK_идеи_постов',
+    abTests: 'VK_тесты',
   }
 };
 
 const HEADERS = {
-  summary: ['Ключ','Дата сбора','Неделя с','Неделя по','ID группы','Короткое имя группы','Название группы','Подписчики на конец недели','Публикации','Просмотры постов (неделя)','Средние просмотры поста','Медианные просмотры поста','Средние лайки на 1 пост','Средние комментарии на 1 пост','Средние репосты на 1 пост','Средняя вовлеченность на 1 пост','ER по подписчикам, %','ER по просмотрам, %','Посетители сообщества','Просмотры/показы сообщества','Охват всего (расчетно)','Охват подписчиков (расчетно)','Подписались','Отписались','Чистый прирост подписчиков','Прирост подписчиков за неделю, %','Дельта охвата WoW, абс.','Дельта охвата WoW, %','Дельта показов WoW, абс.','Дельта показов WoW, %','Лучший пост недели, ID','Лучший пост недели, ссылка','Лучший пост недели: просмотры','Источник охвата','Вирусность, %','Обсуждаемость, %','Лайкабельность, %','Индекс вовлеченности','Лучший день публикации, ЕКБ','Лучший час публикации, ЕКБ','Рекомендация','Предупреждения'],
+  summary: ['Ключ','Дата сбора','Неделя с','Неделя по','ID группы','Короткое имя группы','Название группы','Подписчики на конец недели','Публикации','Просмотры постов (неделя)','Средние просмотры поста','Медианные просмотры поста','Доля просмотров / подписчики, %','Средние лайки (на 1 пост)','Средние комментарии (на 1 пост)','Средние репосты (на 1 пост)','Средняя вовлеченность (на 1 пост)','ER по подписчикам, %','ER по просмотрам, %','Посетители сообщества','Просмотры/показы сообщества','Охват всего (расчетно)','Охват подписчиков (расчетно)','Подписались','Отписались','Чистый прирост подписчиков','Прирост подписчиков за неделю, %','Дельта охвата WoW, абс.','Дельта охвата WoW, %','Дельта показов WoW, абс.','Дельта показов WoW, %','Лучший пост недели, ID','Лучший пост недели, ссылка','Лучший пост недели: просмотры','Источник охвата','Вирусность, %','Обсуждаемость, %','Лайкабельность, %','Индекс вовлеченности','Лучший день публикации, ЕКБ','Лучший час публикации, ЕКБ','Рекомендация','Предупреждения'],
   posts: ['Ключ','Дата сбора','Неделя с','ID группы','Название группы','ID поста','Ссылка','Дата публикации ЕКБ','День недели ЕКБ','Час ЕКБ','Тип поста','Текст','Длина текста','Есть вопрос','Просмотры','Лайки','Комментарии','Репосты','Вовлеченность','ER по просмотрам, %','Вирусность, %','Обсуждаемость, %','Лайкабельность, %','Индекс вовлеченности','Видео секунд','Это клип/шортс','Предупреждения'],
   dashboard: ['Ключ','Неделя с','Неделя по','ID группы','Название группы','Подписчики','Публикации','Просмотры постов (неделя)','Средние просмотры поста','Средняя вовлеченность на 1 пост','ER подписчики %','ER просмотры %','Охват всего (расчетно)','Охват подписчиков (расчетно)','Вирусность %','Обсуждаемость %','Лайкабельность %','Индекс вовлеченности','Лучший час ЕКБ','Предупреждения'],
   insights: ['Ключ','Дата сбора','Неделя с','ID группы','Название группы','Тип вывода','Приоритет','Вывод','Рекомендация','Основание'],
@@ -199,6 +195,7 @@ function finalizeSubscribers(group, summaries){
   }
 
   for (const s of summaries) {
+    s.viewsPerSub = s.subscribers !== '' ? pct(s.avgViews, s.subscribers) : '';
     s.erSubs = s.subscribers !== '' ? pct(s.avgEngagement, s.subscribers) : '';
     s.growthPct = (s.netGrowth !== '' && s.subscribers !== '') ? pct(s.netGrowth, Number(s.subscribers) - Number(s.netGrowth)) : '';
   }
@@ -274,6 +271,7 @@ function summarizeWeek(group, week, posts, stats, prevSummary) {
     views,
     avgViews,
     medViews,
+    viewsPerSub: '',
     likes,
     comments,
     reposts,
@@ -319,7 +317,7 @@ function makeShortRecommendation(posts, metrics, day, hour, warnings){
   const er = round(avg(metrics.map(x=>Number(x.erView)||0)),2);
   return `Фокус: ${bestType}. Лучшее время: ${day || 'не определено'} ${hour !== '' ? `${hour}:00 ЕКБ` : ''}. Средний ER view ${er}%. ${warnings.length ? 'Часть метрик оценочная.' : 'Данные достаточны.'}`;
 }
-function summaryToRow(s){ return [s.key,s.collectedAt,s.weekStart,s.weekEnd,s.groupId,s.screenName,s.name,s.subscribers,s.posts,s.views,s.avgViews,s.medViews,s.avgLikes,s.avgComments,s.avgReposts,s.avgEngagement,s.erSubs,s.erViews,s.visitors,s.communityViews,s.reachTotal,s.reachSubscribers,s.subscribed,s.unsubscribed,s.netGrowth,s.growthPct,s.deltaReachAbs,s.deltaReachPct,s.deltaViewsAbs,s.deltaViewsPct,s.bestPostId,s.bestPostLink,s.bestPostViews,s.reachSource,s.viral,s.discussion,s.likeable,s.index,s.bestDay,s.bestHour,s.recommendation,s.warnings.join('; ')]; }
+function summaryToRow(s){ return [s.key,s.collectedAt,s.weekStart,s.weekEnd,s.groupId,s.screenName,s.name,s.subscribers,s.posts,s.views,s.avgViews,s.medViews,s.viewsPerSub,s.avgLikes,s.avgComments,s.avgReposts,s.avgEngagement,s.erSubs,s.erViews,s.visitors,s.communityViews,s.reachTotal,s.reachSubscribers,s.subscribed,s.unsubscribed,s.netGrowth,s.growthPct,s.deltaReachAbs,s.deltaReachPct,s.deltaViewsAbs,s.deltaViewsPct,s.bestPostId,s.bestPostLink,s.bestPostViews,s.reachSource,s.viral,s.discussion,s.likeable,s.index,s.bestDay,s.bestHour,s.recommendation,s.warnings.join('; ')]; }
 function postToRow(group, week, p){ const m=postMetrics(p); const text=(p.text||'').replace(/\s+/g,' ').slice(0,500); const warn=[]; if(!m.views) warn.push('нет просмотров у поста'); return [`${group.id}_${p.id}`,new Date().toISOString(),isoDate(week.start),group.id,group.name,p.id,link(group,p),ekbDate(p.date),ekbWeekday(p.date),ekbHour(p.date),postType(p),text,text.length,text.includes('?')?'да':'нет',m.views,m.likes,m.comments,m.reposts,m.engagement,m.erView,m.viral,m.discussion,m.likeable,m.index,videoSeconds(p),isClip(p)?'да':'нет',warn.join('; ')]; }
 function dashboardRow(s){ return [s.key,s.weekStart,s.weekEnd,s.groupId,s.name,s.subscribers,s.posts,s.views,s.avgViews,s.avgEngagement,s.erSubs,s.erViews,s.reachTotal,s.reachSubscribers,s.viral,s.discussion,s.likeable,s.index,s.bestHour,s.warnings.join('; ')]; }
 
@@ -333,6 +331,22 @@ async function ensureSheet(sheets, title, header){
   if (cur.join('|') !== header.join('|')) await sheets.spreadsheets.values.update({spreadsheetId: cfg.sheetId, range:`'${title}'!1:1`, valueInputOption:'RAW', requestBody:{values:[header]}});
 }
 async function clearAndWrite(sheets, title, header, rows){ await ensureSheet(sheets,title,header); await sheets.spreadsheets.values.clear({spreadsheetId:cfg.sheetId, range:`'${title}'!A2:ZZ`}); if(rows.length) await sheets.spreadsheets.values.update({spreadsheetId:cfg.sheetId, range:`'${title}'!A2`, valueInputOption:'RAW', requestBody:{values:rows}}); }
+async function deleteSheetsIfExist(sheets, titles){
+  const uniqueTitles = [...new Set(titles.filter(Boolean))];
+  if (!uniqueTitles.length) return;
+  const meta = await sheets.spreadsheets.get({spreadsheetId: cfg.sheetId});
+  const sheetList = meta.data.sheets || [];
+  const requests = [];
+  for (const title of uniqueTitles) {
+    const found = sheetList.find(sh => sh.properties.title === title);
+    if (found && sheetList.length - requests.length > 1) {
+      requests.push({ deleteSheet: { sheetId: found.properties.sheetId } });
+    }
+  }
+  if (requests.length) {
+    await sheets.spreadsheets.batchUpdate({spreadsheetId: cfg.sheetId, requestBody: {requests}});
+  }
+}
 async function upsertRows(sheets, title, header, rows){
   await ensureSheet(sheets,title,header);
   const existing = await sheets.spreadsheets.values.get({spreadsheetId:cfg.sheetId, range:`'${title}'!A2:A`}).catch(()=>({data:{values:[]}}));
@@ -431,9 +445,9 @@ function buildAudienceRows(group, weeks, statsByWeek){
 }
 
 async function main(){
-  console.log(`VK metrics sync v9.3 final custom: групп=${cfg.vkGroups.length}`);
+  console.log(`VK metrics sync v9.4 final clean: групп=${cfg.vkGroups.length}`);
   const sheets = await getSheets();
-  const allSummaryRows=[], allPostRows=[], allDashboard=[], allInsights=[], allAiPosts=[], allAb=[], allGrowth=[], allClips=[], allAudience=[];
+  const allSummaryRows=[], allPostRows=[], allInsights=[], allAiPosts=[], allAb=[];
   for (const raw of cfg.vkGroups) {
     console.log(`Получение группы: ${raw}`);
     const group = await fetchGroup(raw);
@@ -453,25 +467,18 @@ async function main(){
     finalizeSubscribers(group, summaries);
     for (const s of summaries) {
       allSummaryRows.push(summaryToRow(s));
-      allDashboard.push(dashboardRow(s));
     }
     allInsights.push(...buildInsights(group, summaries, allPosts));
     allAiPosts.push(...buildAiPosts(group, summaries, allPosts));
     allAb.push(...buildAbTests(group, summaries, allPosts));
-    allGrowth.push(...buildGrowth(group, summaries));
-    allClips.push(...buildClipsRows(group, allPosts));
-    allAudience.push(...buildAudienceRows(group, weeks, statsByWeek));
   }
   await upsertRows(sheets, cfg.sheets.summary, HEADERS.summary, allSummaryRows);
   await clearAndWrite(sheets, cfg.sheets.posts, HEADERS.posts, allPostRows.length ? allPostRows : [['none',new Date().toISOString(),'','','','','','','','','','','','','','','','','','','','','','','','','Посты не найдены']]);
-  await clearAndWrite(sheets, cfg.sheets.dashboard, HEADERS.dashboard, allDashboard);
   await clearAndWrite(sheets, cfg.sheets.insights, HEADERS.insights, allInsights);
   await clearAndWrite(sheets, cfg.sheets.aiPosts, HEADERS.aiPosts, allAiPosts);
   await clearAndWrite(sheets, cfg.sheets.abTests, HEADERS.abTests, allAb);
-  await clearAndWrite(sheets, cfg.sheets.growth, HEADERS.growth, allGrowth);
-  await clearAndWrite(sheets, cfg.sheets.clips, HEADERS.clips, allClips);
-  await clearAndWrite(sheets, cfg.sheets.audience, HEADERS.audience, allAudience);
-  console.log('Синхронизация v9.3 успешно завершена.');
+  await deleteSheetsIfExist(sheets, ['weekly_summary','posts_raw_vk','dashboard_data','growth_forecast','clips_analytics','audience_weekly','ai_insights','ai_posts','ab_tests']);
+  console.log('Синхронизация v9.4 финальная успешно завершена.');
 }
 
-main().catch(err => { console.error('Сбой синхронизации v9.3.'); console.error(err); process.exit(1); });
+main().catch(err => { console.error('Сбой синхронизации v9.4.'); console.error(err); process.exit(1); });
