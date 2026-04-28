@@ -169,7 +169,7 @@ function postMetrics(p){ const views=Number(p.views?.count||0), likes=Number(p.l
 function link(group, p){ return `https://vk.com/wall-${group.id}_${p.id}`; }
 function numOrBlank(v){ return Number.isFinite(Number(v)) ? Number(v) : ''; }
 function fieldStatus(name, hasReal, value, source){
-  return `${name}: ${hasReal ? 'true' : 'false'${source ? ` (${source})` : ''${hasReal && value !== '' && value != null ? `=${value}` : ''`;
+  return `${name}: ${hasReal ? 'true' : 'false'}${source ? ` (${source})` : ''}${hasReal && value !== '' && value != null ? `=${value}` : ''}`;
 }
 function buildReachSource(stats, derived){
   const parts = [];
